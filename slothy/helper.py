@@ -1554,7 +1554,7 @@ class LLVM_Mc:
                 log.error(SourceLine.write_multiline(source))
                 raise LLVM_Mc_Error from exc
 
-        if platform.system() == "Darwin":
+        if platform.system() in ("Darwin", "Windows"):
             source = list(
                 filter(lambda s: s.text.strip().startswith(".type") is False, source)
             )
@@ -1564,7 +1564,7 @@ class LLVM_Mc:
         log.debug("Calling LLVM MC assmelber on the following code")
         log.debug(code)
 
-        args = [f"--arch={arch}", "--assemble", "--filetype=obj"]
+        args = [f"--arch={arch}", "--triple=aarch64-none-elf", "--assemble", "--filetype=obj"]
         if attr is not None:
             args.append(f"--mattr={attr}")
         try:
