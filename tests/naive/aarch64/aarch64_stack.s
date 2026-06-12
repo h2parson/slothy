@@ -1,0 +1,1 @@
+save STACK0, x0

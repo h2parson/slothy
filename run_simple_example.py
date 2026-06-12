@@ -9,9 +9,13 @@ target = Target_CortexA55
 slothy = Slothy(arch, target)
 
 # example
-slothy.load_source_from_file("tests/naive/aarch64/aarch64_simple0.s")
+slothy.load_source_from_file("tests/naive/aarch64/aarch64_stack.s")
 slothy.config.variable_size=True
 slothy.config.constraints.stalls_first_attempt=32
+slothy.config._allow_useless_instructions = True
+slothy.config._outputs.add("STACK0")
+slothy.config.selfcheck=False
+slothy.config.selftest=False
 
 slothy.optimize()
-slothy.write_source_to_file("opt/aarch64_simple0_a55.s")
+slothy.write_source_to_file("opt/aarch64_stack.s")
