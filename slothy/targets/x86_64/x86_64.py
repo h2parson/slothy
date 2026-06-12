@@ -613,6 +613,12 @@ class x86_64Instruction(Instruction):
         out = out.replace("\\[", "[")
         out = out.replace("\\]", "]")
         return out
+    
+# 32 bit ADD between two registers
+class add_32_rr(x86_64Instruction):
+    pattern = "add <Rd>, <Rs>"
+    inputs = ["Rd", "Rs"]
+    outputs = ["Rd"]
 
 def iter_x86_64_instructions():
     yield from all_subclass_leaves(Instruction)
