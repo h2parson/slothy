@@ -12,6 +12,9 @@ from slothy.targets.exceptions import (
 )
 from slothy.helper import Loop, SourceLine
 
+# TODO: what is this for and can I make it work for x86
+unicorn_arch = None
+unicorn_mode = None
 
 class RegisterType(Enum):
     GPR = 1
@@ -39,7 +42,7 @@ class RegisterType(Enum):
     ):
         """Return the list of all registers of a given type"""
 
-        gprs = ["EAX", "EBX", "ECX", "EDX", "ESI", "EDI", "EBP", "ESP"]
+        gprs = ["EAX", "EBX", "ECX", "EDX"]
         # TODO: add flags
         flags = []
 
@@ -73,6 +76,17 @@ class RegisterType(Enum):
             "gpr": RegisterType.GPR,
             "flags": RegisterType.FLAGS
         }.get(string, None)
+    
+    # TODO: fill this in
+    @staticmethod
+    def default_reserved():
+        """Return the list of registers that should be reserved by default"""
+        return set()
+    
+    @staticmethod
+    def default_aliases():
+        "Register aliases used by the architecture"
+        return {}
 
 class Instruction:
     def __init__(
@@ -120,6 +134,44 @@ class Instruction:
         self.flag = None
         self.barrel = None
 
+    def extract_read_writes(self):
+        """Extracts 'reads'/'writes' clauses from the source line of the instruction"""
+
+        src_line = self.source_line
+
+        def hint_register_name(tag):
+            return f"hint_{tag}"
+
+        # Check if the source line is tagged as reading/writing from memory
+        def add_memory_write(tag):
+            self.num_out += 1
+            self.args_out_restrictions.append(None)
+            self.args_out.append(hint_register_name(tag))
+            self.arg_types_out.append(RegisterType.HINT)
+
+        def add_memory_read(tag):
+            self.num_in += 1
+            self.args_in_restrictions.append(None)
+            self.args_in.append(hint_register_name(tag))
+            self.arg_types_in.append(RegisterType.HINT)
+
+        write_tags = src_line.tags.get("writes", [])
+        read_tags = src_line.tags.get("reads", [])
+
+        if not isinstance(write_tags, list):
+            write_tags = [write_tags]
+
+        if not isinstance(read_tags, list):
+            read_tags = [read_tags]
+
+        for w in write_tags:
+            add_memory_write(w)
+
+        for r in read_tags:
+            add_memory_read(r)
+
+        return self
+
     def global_parsing_cb(self, a, log=None):
         """Parsing callback triggered after DataFlowGraph parsing which allows
         modification of the instruction in the context of the overall computation.
@@ -148,6 +200,19 @@ class Instruction:
             if isinstance(self, inst):
                 return True
         return False
+
+    # scalar or vector
+    def is_load(self):
+        """Indicates if an instruction is a load instruction"""
+        return False
+
+    def is_store(self):
+        """Indicates if an instruction is a store instruction"""
+        return False
+
+    def is_load_store_instruction(self):
+        """Indicates if an instruction is a scalar or Neon load or store instruction"""
+        return self.is_load() or self.is_store()
 
     @classmethod
     def make(cls, src):
@@ -307,54 +372,10 @@ class x86_64Instruction(Instruction):
         def pattern_transform(g):
             return (
                 f"([{g.group(1).lower()}{g.group(1)}]"
-                f"(?P<raw_{g.group(1)}{g.group(2)}>[0-9_][0-9_]*)|"
-                f"([{g.group(1).lower()}{g.group(1)}]"
-                f"<(?P<symbol_{g.group(1)}{g.group(2)}>\\w+)>))"
+                f"(?P<raw_{g.group(1)}{g.group(2)}>([abcd]x)|([ABCD]X)))"
             )
 
-        # TODO: update the patterns to match
-        src = re.sub(r"<([BHWXVQTDS])(\w+)>", pattern_transform, src)
-
-        # Replace <key> or <key0>, <key1>, ... with pattern
-        def replace_placeholders(src, mnemonic_key, regexp, group_name):
-            prefix = f"<{mnemonic_key}"
-            pattern = f"<{mnemonic_key}>"
-
-            def pattern_i(i):
-                return f"<{mnemonic_key}{i}>"
-
-            cnt = src.count(prefix)
-            if cnt > 1:
-                for i in range(cnt):
-                    src = re.sub(pattern_i(i), f"(?P<{group_name}{i}>{regexp})", src)
-            else:
-                src = re.sub(pattern, f"(?P<{group_name}>{regexp})", src)
-
-            return src
-
-        # TODO: add flags and update patterns if needed
-        flaglist = [
-        ]
-
-        flag_pattern = "|".join(flaglist)
-        imm_pattern = (
-            "(#(\\\\w|\\\\s|/| |-|\\*|\\+|\\(|\\)|<<|>>)+)"
-            "|"
-            "(((0[xb])?[0-9a-fA-F]+|/| |-|\\*|\\+|\\(|\\)|<<|>>)+)"
-        )
-        literal_pattern = (
-            "(#=(\\\\w|\\\\s|/| |-|\\*|\\+|\\(|\\)|<<|>>)+)"
-            "|"
-            "(=((0[xb])?[0-9a-fA-F]+|/| |-|\\*|\\+|\\(|\\)|=|<<|>>)+)"
-        )
-        index_pattern = "[0-9]+"
-        barrel_pattern = "(?i:lsl|ror|lsr|asr)\\\\s*"
-
-        src = replace_placeholders(src, "imm", imm_pattern, "imm")
-        src = replace_placeholders(src, "literal", literal_pattern, "literal")
-        src = replace_placeholders(src, "index", index_pattern, "index")
-        src = replace_placeholders(src, "flag", flag_pattern, "flag")
-        src = replace_placeholders(src, "barrel", barrel_pattern, "barrel")
+        src = re.sub(r"<([E])(\w+)>", pattern_transform, src)
 
         src = r"\s*" + src + r"\s*(//.*)?\Z"
         return src
@@ -396,9 +417,9 @@ class x86_64Instruction(Instruction):
     @staticmethod
     @cache
     def _infer_register_type(ptrn):
-        if ptrn.upper() in RegisterType.list_registers(RegisterType.GPR):
+        if ptrn[0].upper() in ['E']:
             return RegisterType.GPR
-        if ptrn.upper() in RegisterType.list_registers(RegisterType.FLAGS):
+        if ptrn[0].upper() in []:
             return RegisterType.FLAGS
         raise FatalParsingException(f"Unknown pattern: {ptrn}")
 
@@ -452,35 +473,26 @@ class x86_64Instruction(Instruction):
         assert len(in_outs) == len(arg_types_in_out)
         self.pattern_in_outs = list(zip(in_outs, arg_types_in_out))
 
-    # TODO: will there need to be a new version of this?
     # @staticmethod
-    # def _to_reg(ty, s):
-    #     if ty == RegisterType.GPR:
-    #         c = "x"
-    #     elif ty == RegisterType.NEON:
-    #         c = "v"
-    #     elif ty == RegisterType.HINT:
-    #         c = "t"
-    #     else:
-    #         assert False
-    #     if s.replace("_", "").isdigit():
-    #         return f"{c}{s}"
-    #     return s
+    def _to_reg(ty, s):
+        if ty == RegisterType.GPR:
+            c = "E"
+        # elif ty == RegisterType.NEON:
+        #     c = "v"
+        # elif ty == RegisterType.HINT:
+        #     c = "t"
+        else:
+            assert False
+        if s.replace("_", ""):
+            return f"{c}{s}"
+        return s
 
     @staticmethod
     def _build_pattern_replacement(s, ty, arg):
         if ty == RegisterType.GPR:
-            if arg[0] != "x":
+            if arg[0] not in ['e','E']:
                 return f"{s[0].upper()}<{arg}>"
-            return s[0].lower() + arg[1:]
-        if ty == RegisterType.NEON:
-            if arg[0] != "v":
-                return f"{s[0].upper()}<{arg}>"
-            return s[0].lower() + arg[1:]
-        if ty == RegisterType.HINT:
-            if arg[0] != "t":
-                return f"{s[0].upper()}<{arg}>"
-            return s[0].lower() + arg[1:]
+            return s[0] + arg[1:]
         raise FatalParsingException(f"Unknown register type ({s}, {ty}, {arg})")
 
     @staticmethod
@@ -527,19 +539,19 @@ class x86_64Instruction(Instruction):
         group_to_attribute("flag", "flag")
         group_to_attribute("barrel", "barrel")
 
-        for _, ty in obj.pattern_inputs:
+        for s, ty in obj.pattern_inputs:
             if ty == RegisterType.FLAGS:
                 obj.args_in.append("flags")
-            # else:
-            #     obj.args_in.append(x86_64Instruction._to_reg(ty, res[s]))
-        for _, ty in obj.pattern_outputs:
+            else:
+                obj.args_in.append(x86_64Instruction._to_reg(ty, res[s]))
+        for s, ty in obj.pattern_outputs:
             if ty == RegisterType.FLAGS:
                 obj.args_out.append("flags")
-            # else:
-            #     obj.args_out.append(x86_64Instruction._to_reg(ty, res[s]))
+            else:
+                obj.args_out.append(x86_64Instruction._to_reg(ty, res[s]))
 
-        # for s, ty in obj.pattern_in_outs:
-        #     obj.args_in_out.append(x86_64Instruction._to_reg(ty, res[s]))
+        for s, ty in obj.pattern_in_outs:
+            obj.args_in_out.append(x86_64Instruction._to_reg(ty, res[s]))
 
     @staticmethod
     def build(c, src):
@@ -616,9 +628,9 @@ class x86_64Instruction(Instruction):
     
 # 32 bit ADD between two registers
 class add_32_rr(x86_64Instruction):
-    pattern = "add <Rd>, <Rs>"
-    inputs = ["Rd", "Rs"]
-    outputs = ["Rd"]
+    pattern = "add <Ed>, <Es>"
+    inputs = ["Es"]
+    in_outs = ["Ed"]
 
 def iter_x86_64_instructions():
     yield from all_subclass_leaves(Instruction)

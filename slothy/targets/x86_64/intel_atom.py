@@ -6,8 +6,11 @@ from slothy.targets.x86_64.x86_64 import (
     add_32_rr,
 )
 
+issue_rate = 2
+llvm_mca_target = "intel-atom"
+
 class ExecutionUnit(Enum):
-    """Enumeration of execution units in Cortex-A55 model"""
+    """Enumeration of execution units in intel Atom model"""
 
     ALU0 = 1
     ALU1 = 2
@@ -38,6 +41,15 @@ def add_further_constraints(slothy):
         return
     return
 
+def has_min_max_objective(config):
+    _ = config
+    return False
+
+
+def get_min_max_objective(slothy):
+    _ = slothy
+    return
+
 execution_units = {
     (
         add_32_rr,
@@ -47,10 +59,11 @@ execution_units = {
     ],
 }
 
+# TODO: Agner Fog says 1/2 for this. Make sure 1 is right
 inverse_throughput = {
     (
         add_32_rr,
-    ): 1/2,
+    ): 1,
 }
 
 default_latencies = {
