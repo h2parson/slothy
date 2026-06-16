@@ -42,7 +42,26 @@ class RegisterType(Enum):
     ):
         """Return the list of all registers of a given type"""
 
-        gprs = ["EAX", "EBX", "ECX", "EDX"]
+        letter_labels = ['A','B','C','D']
+
+        byte_gprs       = [f"{p}L" for p in letter_labels] + \
+                          ['DIL','SIL'] + \
+                          [f"R{n}L" for n in range(8,16)]
+        
+        word_gprs       = [f"{p}X" for p in letter_labels] + \
+                          ['DI','SI'] + \
+                          [f"R{n}W" for n in range(8,16)]
+        
+        dblword_gprs    = [f"E{p}X" for p in letter_labels] + \
+                          ['EDI','ESI'] + \
+                          [f"R{n}D" for n in range(8,16)]
+        
+        qdword_gprs     = [f"R{p}X" for p in letter_labels] + \
+                          ['RDI','RSI'] + \
+                          [f"R{n}" for n in range(8,16)]
+
+        gprs = byte_gprs + word_gprs + dblword_gprs + qdword_gprs
+
         # TODO: add flags
         flags = []
 
@@ -377,6 +396,29 @@ class x86_64Instruction(Instruction):
 
         src = re.sub(r"<([E])(\w+)>", pattern_transform, src)
 
+        # Replace <key> or <key0>, <key1>, ... with pattern
+        def replace_placeholders(src, mnemonic_key, regexp, group_name):
+            prefix = f"<{mnemonic_key}"
+            pattern = f"<{mnemonic_key}>"
+
+            def pattern_i(i):
+                return f"<{mnemonic_key}{i}>"
+
+            cnt = src.count(prefix)
+            if cnt > 1:
+                for i in range(cnt):
+                    src = re.sub(pattern_i(i), f"(?P<{group_name}{i}>{regexp})", src)
+            else:
+                src = re.sub(pattern, f"(?P<{group_name}>{regexp})", src)
+
+            return src
+        
+        imm_pattern = (
+            "([0-9]*)"
+        )
+
+        src = replace_placeholders(src, "imm", imm_pattern, "imm")
+
         src = r"\s*" + src + r"\s*(//.*)?\Z"
         return src
 
@@ -570,6 +612,7 @@ class x86_64Instruction(Instruction):
             assert isinstance(src, dict)
             res = src
 
+        # TODO: add this
         # x86_64Instruction._enforce_datatype_matching(pattern, res)
 
         obj = c(
@@ -615,20 +658,32 @@ class x86_64Instruction(Instruction):
                 txt = txt.replace(f"<{mnemonic_key}{i}>", t(v))
             return txt
 
-        out = replace_pattern(out, "immediate", "imm", lambda x: f"#{x}")
-        out = replace_pattern(out, "immediate", "literal", lambda x: f"{x}")
-        out = replace_pattern(out, "datatype", "dt", lambda x: x.upper())
-        out = replace_pattern(out, "flag", "flag")
-        out = replace_pattern(out, "index", "index", str)
-        out = replace_pattern(out, "barrel", "barrel", lambda x: x.lower())
+        out = replace_pattern(out, "immediate", "imm", lambda x: f"{x}")
+        # out = replace_pattern(out, "immediate", "literal", lambda x: f"{x}")
+        # out = replace_pattern(out, "datatype", "dt", lambda x: x.upper())
+        # out = replace_pattern(out, "flag", "flag")
+        # out = replace_pattern(out, "index", "index", str)
+        # out = replace_pattern(out, "barrel", "barrel", lambda x: x.lower())
 
         out = out.replace("\\[", "[")
         out = out.replace("\\]", "]")
         return out
-    
-# 32 bit ADD between two registers
-class add_32_rr(x86_64Instruction):
+
+# 32 bit ADD with E-prefix and Immediate
+class add_ei(x86_64Instruction):
+    pattern = "add <Ed>, <imm>"
+    in_outs = ["Ed"]
+
+
+# 32 bit ADD with E-prefixes
+class add_ee(x86_64Instruction):
     pattern = "add <Ed>, <Es>"
+    inputs = ["Es"]
+    in_outs = ["Ed"]
+
+# 32 bit ADD with numeric registers
+class add_64_rr(x86_64Instruction):
+    pattern = "add <Rd>, <Rs>"
     inputs = ["Es"]
     in_outs = ["Ed"]
 

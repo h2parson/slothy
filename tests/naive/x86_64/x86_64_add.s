@@ -1,1 +1,1 @@
-add eax, ebx
+add rax, rbx

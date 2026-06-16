@@ -3,6 +3,7 @@ from slothy.helper import lookup_multidict
 from slothy.targets.x86_64.x86_64 import (
     find_class,
     Instruction,
+    add_32_ri,
     add_32_rr,
 )
 
@@ -52,6 +53,7 @@ def get_min_max_objective(slothy):
 
 execution_units = {
     (
+        add_32_ri,
         add_32_rr,
     ): [
         ExecutionUnit.ALU0,
@@ -62,18 +64,23 @@ execution_units = {
 # TODO: Agner Fog says 1/2 for this. Make sure 1 is right
 inverse_throughput = {
     (
+        add_32_ri,
         add_32_rr,
     ): 1,
 }
 
 default_latencies = {
     (
+        add_32_ri,
         add_32_rr,
     ): 1,
 }
 
 
-def get_latency(src):
+def get_latency(src, out_idx, dst):
+    _ = out_idx
+    _ = dst
+
     instclass_src = find_class(src)
 
     latency = lookup_multidict(default_latencies, src, instclass_src)
