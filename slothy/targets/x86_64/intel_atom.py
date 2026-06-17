@@ -2,9 +2,14 @@ from enum import Enum
 from slothy.helper import lookup_multidict
 from slothy.targets.x86_64.x86_64 import (
     find_class,
-    Instruction,
-    add_ri,
-    add_rr,
+    add_hi,
+    add_si,
+    add_di,
+    add_qi,
+    add_hh,
+    add_ss,
+    add_dd,
+    add_qq,
 )
 
 issue_rate = 2
@@ -53,8 +58,14 @@ def get_min_max_objective(slothy):
 
 execution_units = {
     (
-        add_ri,
-        add_rr,
+        add_hi,
+        add_si,
+        add_di,
+        add_qi,
+        add_hh,
+        add_ss,
+        add_dd,
+        add_qq,
     ): [
         ExecutionUnit.ALU0,
         ExecutionUnit.ALU1,
@@ -64,15 +75,27 @@ execution_units = {
 # TODO: Agner Fog says 1/2 for this. Make sure 1 is right
 inverse_throughput = {
     (
-        add_ri,
-        add_rr,
+        add_hi,
+        add_si,
+        add_di,
+        add_qi,
+        add_hh,
+        add_ss,
+        add_dd,
+        add_qq,
     ): 1,
 }
 
 default_latencies = {
     (
-        add_ri,
-        add_rr,
+        add_hi,
+        add_si,
+        add_di,
+        add_qi,
+        add_hh,
+        add_ss,
+        add_dd,
+        add_qq,
     ): 1,
 }
 

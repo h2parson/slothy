@@ -17,7 +17,10 @@ unicorn_arch = None
 unicorn_mode = None
 
 class RegisterType(Enum):
-    GPR = 1
+    GPR_H = 1
+    GPR_S = 2
+    GPR_D = 3
+    GPR_Q = 4
     FLAGS = 2
 
     def __str__(self):
@@ -34,6 +37,38 @@ class RegisterType(Enum):
     @staticmethod
     def callee_saved_registers():
         return [f"x{i}" for i in range(18, 31)] + [f"v{i}" for i in range(8, 16)]
+    
+    @staticmethod
+    @cache
+    def list_byte_gprs():
+        letter_labels = ['A','B','C','D']
+        return [f"{p}L" for p in letter_labels] + \
+                ['DIL','SIL'] + \
+                [f"R{n}L" for n in range(8,16)]
+    
+    @staticmethod
+    @cache
+    def list_word_gprs():
+        letter_labels = ['A','B','C','D']
+        return [f"{p}X" for p in letter_labels] + \
+                ['DI','SI'] + \
+                [f"R{n}W" for n in range(8,16)]
+    
+    @staticmethod
+    @cache
+    def list_dblword_gprs():
+        letter_labels = ['A','B','C','D']
+        return [f"E{p}X" for p in letter_labels] + \
+                ['EDI','ESI'] + \
+                [f"R{n}D" for n in range(8,16)]
+    
+    @staticmethod
+    @cache
+    def list_qdword_gprs():
+        letter_labels = ['A','B','C','D']
+        return [f"R{p}X" for p in letter_labels] + \
+                ['RDI','RSI'] + \
+                [f"R{n}" for n in range(8,16)]
 
     @staticmethod
     @cache
@@ -42,31 +77,14 @@ class RegisterType(Enum):
     ):
         """Return the list of all registers of a given type"""
 
-        letter_labels = ['A','B','C','D']
-
-        byte_gprs       = [f"{p}L" for p in letter_labels] + \
-                          ['DIL','SIL'] + \
-                          [f"R{n}L" for n in range(8,16)]
-        
-        word_gprs       = [f"{p}X" for p in letter_labels] + \
-                          ['DI','SI'] + \
-                          [f"R{n}W" for n in range(8,16)]
-        
-        dblword_gprs    = [f"E{p}X" for p in letter_labels] + \
-                          ['EDI','ESI'] + \
-                          [f"R{n}D" for n in range(8,16)]
-        
-        qdword_gprs     = [f"R{p}X" for p in letter_labels] + \
-                          ['RDI','RSI'] + \
-                          [f"R{n}" for n in range(8,16)]
-
-        gprs = byte_gprs + word_gprs + dblword_gprs + qdword_gprs
-
         # TODO: add flags
         flags = []
 
         return {
-            RegisterType.GPR: gprs,
+            RegisterType.GPR_H: RegisterType.list_byte_gprs(),
+            RegisterType.GPR_S: RegisterType.list_word_gprs(),
+            RegisterType.GPR_D: RegisterType.list_dblword_gprs(),
+            RegisterType.GPR_Q: RegisterType.list_qdword_gprs(),
             RegisterType.FLAGS: flags,
         }[reg_type]
 
@@ -89,10 +107,13 @@ class RegisterType(Enum):
 
     @staticmethod
     def from_string(string):
-        """Find registe type from string"""
+        """Find register type from string"""
         string = string.lower()
         return {
-            "gpr": RegisterType.GPR,
+            "gpr_h": RegisterType.GPR_H,
+            "gpr_s": RegisterType.GPR_S,
+            "gpr_d": RegisterType.GPR_D,
+            "gpr_q": RegisterType.GPR_Q,
             "flags": RegisterType.FLAGS
         }.get(string, None)
     
@@ -348,22 +369,18 @@ class x86_64Instruction(Instruction):
 
     PARSERS = {}
 
-    # Not sure how datatypes will be interpreted for x86 yet
-    # TODO: reinstate function
+    @staticmethod
+    def _replace_duplicate_datatypes(src, mnemonic_key):
+        pattern = re.compile(rf"<{re.escape(mnemonic_key)}\d*>")
 
-    # @staticmethod
-    # def _enforce_datatype_matching(pattern, res):
-    #     datatypes = {}
-    #     for i, m in enumerate(re.finditer(r"<dt\d*>", pattern)):
-    #         dt = m.group(0)
-    #         val = res.get(f"datatype{i}", res.get("datatype"))
-    #         if dt in datatypes and datatypes[dt] != val:
-    #             raise FatalParsingException(
-    #                 f"Inconsistent data type: {datatypes[dt]} vs {val}"
-    #             )
-    #         elif dt not in datatypes and val in datatypes.values():
-    #             raise FatalParsingException(f"Inconsistent dt: {dt}")
-    #         datatypes[dt] = val
+        matches = list(pattern.finditer(src))
+
+        if len(matches) > 1:
+            for i, match in enumerate(reversed(matches)):
+                start, end = match.span()
+                src = src[:start] + f"<{mnemonic_key}{len(matches)-1-i}>" + src[end:]
+
+        return src
 
     @staticmethod
     def _unfold_pattern(src):
@@ -388,12 +405,18 @@ class x86_64Instruction(Instruction):
         for c, cp in flexible_spacing:
             src = re.sub(c, cp, src)
 
-        def pattern_transform(g):
+        def idx_pattern_transform(g):
             return (
-                f"(\w?)(?P<raw_{g.group(1)}{g.group(2)}>([0-9]+|.(i|I)|.(?=(x|X))|.(?=(l|L))))(\w?)"
+                f"(\\w?)(?P<{g.group(1)}>([0-9]+|.(i|I)|.(?=(x|X))|.(?=(l|L))))(\\w?)"
+            )
+        
+        def sz_pattern_transform(g):
+            return (
+                f"(?P<{g.group(1)}>([eErR]?([a-dA-D][lLxX]|[sSdD][iI][lL]?)|[rR](8|9|1[0-5])))"
             )
 
-        src = re.sub(r"<(R)(\w+)>", pattern_transform, src)
+        idx_re = re.sub(r"<(\wW\w)>", idx_pattern_transform, src)
+        sz_re = re.sub(r"<(\w)(W\w)>", sz_pattern_transform, src)
 
         # Replace <key> or <key0>, <key1>, ... with pattern
         def replace_placeholders(src, mnemonic_key, regexp, group_name):
@@ -416,33 +439,48 @@ class x86_64Instruction(Instruction):
             "([0-9]*)"
         )
 
-        src = replace_placeholders(src, "imm", imm_pattern, "imm")
+        idx_re = replace_placeholders(idx_re, "imm", imm_pattern, "imm")
+        sz_re = replace_placeholders(sz_re, "imm", imm_pattern, "imm")
+        for sz_sym in ['H','S','D','Q']:
+            sz_re = x86_64Instruction._replace_duplicate_datatypes(sz_re, sz_sym)
 
-        src = r"\s*" + src + r"\s*(//.*)?\Z"
-        return src
+        idx_re = r"\s*" + idx_re + r"\s*(//.*)?\Z"
+        sz_re = r"\s*" + sz_re + r"\s*(//.*)?\Z"
+        return idx_re, sz_re
 
     @staticmethod
-    # TODO: rewrite this after in case regex capture groups are not the same
+    def check_reg_sizes(sz_re_match):
+        sz_dict = sz_re_match.groupdict()
+        for sz_sym, reg in sz_dict.items():
+            reg = reg.upper()
+            if 'H' in sz_sym:
+                if reg in RegisterType.list_byte_gprs():
+                    return True
+            elif 'S' in sz_sym:
+                if reg in RegisterType.list_word_gprs():
+                    return True
+            elif 'D' in sz_sym:
+                if reg in RegisterType.list_dblword_gprs():
+                    return True
+            elif 'Q' in sz_sym:
+                if reg in RegisterType.list_qdword_gprs():
+                    return True
+            return False
+
+    @staticmethod
     def _build_parser(src):
-        regexp_txt = x86_64Instruction._unfold_pattern(src)
-        regexp = re.compile(regexp_txt)
+        idx_regexp_txt, sz_regexp_txt = x86_64Instruction._unfold_pattern(src)
+        idx_regexp = re.compile(idx_regexp_txt)
+        sz_regexp = re.compile(sz_regexp_txt)
 
         def _parse(line):
-            regexp_result = regexp.match(line)
-            if regexp_result is None:
+            idx_regexp_result = idx_regexp.match(line)
+            sz_regexp_result = sz_regexp.match(line)
+            if idx_regexp_result is None or sz_regexp_result is None or not x86_64Instruction.check_reg_sizes(sz_regexp_result):
                 raise ParsingException(
-                    f"Does not match instruction pattern {src}" f"[regex: {regexp_txt}]"
+                    f"Does not match instruction pattern {src}" f"[indexing regex: {idx_regexp_txt}]" f"[size regex: {sz_regexp_txt}]" 
                 )
-            res = regexp.match(line).groupdict()
-            items = list(res.items())
-            for k, v in items:
-                for prefix in ["symbol_", "raw_"]:
-                    if k.startswith(prefix):
-                        del res[k]
-                        if v is None:
-                            continue
-                        k = k[len(prefix) :]
-                        res[k] = v
+            res = idx_regexp.match(line).groupdict()
             return res
 
         return _parse
@@ -459,8 +497,14 @@ class x86_64Instruction(Instruction):
     @staticmethod
     @cache
     def _infer_register_type(ptrn):
-        if ptrn[0].upper() in ['R']:
-            return RegisterType.GPR
+        if ptrn[0:2].upper() == 'HW':
+            return RegisterType.GPR_H
+        if ptrn[0:2].upper() == 'SW':
+            return RegisterType.GPR_S
+        if ptrn[0:2].upper() == 'DW':
+            return RegisterType.GPR_D
+        if ptrn[0:2].upper() == 'QW':
+            return RegisterType.GPR_Q
         if ptrn[0].upper() in []:
             return RegisterType.FLAGS
         raise FatalParsingException(f"Unknown pattern: {ptrn}")
@@ -517,22 +561,46 @@ class x86_64Instruction(Instruction):
 
     @staticmethod
     def _to_reg(ty, s):
-        if ty == RegisterType.GPR:
+        if ty == RegisterType.GPR_H:
+                s = s.lower()
                 if s.isnumeric():
-                    return f"R{s}D"
-                s = f"E{s.upper()}"
+                    return f"r{s}l"
                 if s[-1] in ['A','B','C','D']:
-                    s += 'X'
+                    pass
+                return f"{s}l"
+        if ty == RegisterType.GPR_S:
+                s = s.lower()
+                if s.isnumeric():
+                    return f"r{s}w"
+                if s[-1] in ['A','B','C','D']:
+                    return f"{s}x"
                 return s
+        if ty == RegisterType.GPR_D:
+                s = s.lower()
+                if s.isnumeric():
+                    return f"r{s}d"
+                if s[-1] in ['A','B','C','D']:
+                    s = f"{s}x"
+                return f"e{s}"
+        if ty == RegisterType.GPR_Q:
+                s = s.lower()
+                if s.isnumeric():
+                    return f"r{s}"
+                if s[-1] in ['A','B','C','D']:
+                    s = f"{s}x"
+                return f"r{s}"
         return s
 
     @staticmethod
     def _build_pattern_replacement(s, ty, arg):
-        if ty == RegisterType.GPR:
-            if arg[0] not in ['e','E']:
-                return f"{s[0].upper()}<{arg}>"
-            return s[0] + arg[1:]
-        raise FatalParsingException(f"Unknown register type ({s}, {ty}, {arg})")
+        _ = s
+        _ = ty
+        return arg
+        # if ty == RegisterType.GPR:
+        #     if arg[0] not in ['e','E']:
+        #         return f"{s[0].upper()}<{arg}>"
+        #     return s[0] + arg[1:]
+        # raise FatalParsingException(f"Unknown register type ({s}, {ty}, {arg})")
 
     @staticmethod
     def _instantiate_pattern(s, ty, arg, out):
@@ -609,9 +677,6 @@ class x86_64Instruction(Instruction):
             assert isinstance(src, dict)
             res = src
 
-        # TODO: add this
-        # x86_64Instruction._enforce_datatype_matching(pattern, res)
-
         obj = c(
             pattern,
             inputs=inputs,
@@ -664,18 +729,55 @@ class x86_64Instruction(Instruction):
 
         out = out.replace("\\[", "[")
         out = out.replace("\\]", "]")
-        return out
+        return out 
 
-# ADD Immediate to register
-class add_ri(x86_64Instruction):
-    pattern = "add <Rd>, <imm>"
-    in_outs = ["Rd"]
+# ADD immediate to register
+# Byte register
+class add_hi(x86_64Instruction):
+    pattern = "add <HWd>, <imm>"
+    in_outs = ["HWd"]
 
-# ADD register to register
-class add_rr(x86_64Instruction):
-    pattern = "add <Rd>, <Rs>"
-    inputs = ["Rs"]
-    in_outs = ["Rd"]
+# ADD immediate to register
+# Word register
+class add_si(x86_64Instruction):
+    pattern = "add <SWd>, <imm>"
+    in_outs = ["SWd"]
+
+# ADD immediate to register
+# Doubleword register
+class add_di(x86_64Instruction):
+    pattern = "add <DWd>, <imm>"
+    in_outs = ["DWd"]
+
+# ADD immediate to register
+# Quadword register
+class add_qi(x86_64Instruction):
+    pattern = "add <QWd>, <imm>"
+    in_outs = ["QWd"]
+
+# ADD byte register to byte register
+class add_hh(x86_64Instruction):
+    pattern = "add <HWd>, <HWs>"
+    inputs = ["HWs"]
+    in_outs = ["HWd"]
+
+# ADD word register to word register
+class add_ss(x86_64Instruction):
+    pattern = "add <SWd>, <SWs>"
+    inputs = ["SWs"]
+    in_outs = ["SWd"]
+
+# ADD doubleword register to doubleword register
+class add_dd(x86_64Instruction):
+    pattern = "add <DWd>, <DWs>"
+    inputs = ["DWs"]
+    in_outs = ["DWd"]
+
+# ADD quadword register to quadword register
+class add_qq(x86_64Instruction):
+    pattern = "add <QWd>, <QWs>"
+    inputs = ["QWs"]
+    in_outs = ["QWd"]
 
 def iter_x86_64_instructions():
     yield from all_subclass_leaves(Instruction)

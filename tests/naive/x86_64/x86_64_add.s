@@ -1,1 +1,1 @@
-add rax, rbx
+add al, bl
