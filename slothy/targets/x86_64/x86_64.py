@@ -390,11 +390,10 @@ class x86_64Instruction(Instruction):
 
         def pattern_transform(g):
             return (
-                f"([{g.group(1).lower()}{g.group(1)}]"
-                f"(?P<raw_{g.group(1)}{g.group(2)}>([abcd]x)|([ABCD]X)))"
+                f"(\w?)(?P<raw_{g.group(1)}{g.group(2)}>([0-9]+|.(i|I)|.(?=(x|X))|.(?=(l|L))))(\w?)"
             )
 
-        src = re.sub(r"<([E])(\w+)>", pattern_transform, src)
+        src = re.sub(r"<(R)(\w+)>", pattern_transform, src)
 
         # Replace <key> or <key0>, <key1>, ... with pattern
         def replace_placeholders(src, mnemonic_key, regexp, group_name):
@@ -423,6 +422,7 @@ class x86_64Instruction(Instruction):
         return src
 
     @staticmethod
+    # TODO: rewrite this after in case regex capture groups are not the same
     def _build_parser(src):
         regexp_txt = x86_64Instruction._unfold_pattern(src)
         regexp = re.compile(regexp_txt)
@@ -459,7 +459,7 @@ class x86_64Instruction(Instruction):
     @staticmethod
     @cache
     def _infer_register_type(ptrn):
-        if ptrn[0].upper() in ['E']:
+        if ptrn[0].upper() in ['R']:
             return RegisterType.GPR
         if ptrn[0].upper() in []:
             return RegisterType.FLAGS
@@ -515,18 +515,15 @@ class x86_64Instruction(Instruction):
         assert len(in_outs) == len(arg_types_in_out)
         self.pattern_in_outs = list(zip(in_outs, arg_types_in_out))
 
-    # @staticmethod
+    @staticmethod
     def _to_reg(ty, s):
         if ty == RegisterType.GPR:
-            c = "E"
-        # elif ty == RegisterType.NEON:
-        #     c = "v"
-        # elif ty == RegisterType.HINT:
-        #     c = "t"
-        else:
-            assert False
-        if s.replace("_", ""):
-            return f"{c}{s}"
+                if s.isnumeric():
+                    return f"R{s}D"
+                s = f"E{s.upper()}"
+                if s[-1] in ['A','B','C','D']:
+                    s += 'X'
+                return s
         return s
 
     @staticmethod
@@ -585,15 +582,15 @@ class x86_64Instruction(Instruction):
             if ty == RegisterType.FLAGS:
                 obj.args_in.append("flags")
             else:
-                obj.args_in.append(x86_64Instruction._to_reg(ty, res[s]))
+                obj.args_in.append(obj._to_reg(ty, res[s]))
         for s, ty in obj.pattern_outputs:
             if ty == RegisterType.FLAGS:
                 obj.args_out.append("flags")
             else:
-                obj.args_out.append(x86_64Instruction._to_reg(ty, res[s]))
+                obj.args_out.append(obj._to_reg(ty, res[s]))
 
         for s, ty in obj.pattern_in_outs:
-            obj.args_in_out.append(x86_64Instruction._to_reg(ty, res[s]))
+            obj.args_in_out.append(obj._to_reg(ty, res[s]))
 
     @staticmethod
     def build(c, src):
@@ -669,23 +666,16 @@ class x86_64Instruction(Instruction):
         out = out.replace("\\]", "]")
         return out
 
-# 32 bit ADD with E-prefix and Immediate
-class add_ei(x86_64Instruction):
-    pattern = "add <Ed>, <imm>"
-    in_outs = ["Ed"]
+# ADD Immediate to register
+class add_ri(x86_64Instruction):
+    pattern = "add <Rd>, <imm>"
+    in_outs = ["Rd"]
 
-
-# 32 bit ADD with E-prefixes
-class add_ee(x86_64Instruction):
-    pattern = "add <Ed>, <Es>"
-    inputs = ["Es"]
-    in_outs = ["Ed"]
-
-# 32 bit ADD with numeric registers
-class add_64_rr(x86_64Instruction):
+# ADD register to register
+class add_rr(x86_64Instruction):
     pattern = "add <Rd>, <Rs>"
-    inputs = ["Es"]
-    in_outs = ["Ed"]
+    inputs = ["Rs"]
+    in_outs = ["Rd"]
 
 def iter_x86_64_instructions():
     yield from all_subclass_leaves(Instruction)
